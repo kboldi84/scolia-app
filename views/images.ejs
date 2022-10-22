@@ -1,0 +1,26 @@
+<%- include('partials/header'); -%>
+<%- include('partials/navbar-home'); -%>
+
+
+<ul class="items">
+    <% images.forEach(function(image) { %>
+    <li class="item">
+        <img src="<%= image.src %>" >
+      <h4>Album: <%= image.album %></h4>
+      <p>
+        <ul class="controls">
+            <li class="c-left"> <a href="/images/delete/<%= image._id %>"  ><i class="fa-solid fa-trash"></i></a></li>
+            <li class="c-right"> <a href="/images/<%= image._id %>" ><i class="fa-solid fa-book-open-reader" title="details"></i>
+            </a></li>
+        </ul>
+    </p>
+    </li>
+    <% }); %>
+  </ul>
+
+  <script>
+   const pageTitle = JSON.parse('<%- JSON.stringify(pageTitle) %>');
+   document.getElementById("pageTitle").innerHTML = pageTitle; 
+  </script>
+
+<%- include('partials/footer'); -%>

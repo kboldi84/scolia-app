@@ -1,0 +1,85 @@
+<%- include('partials/header'); -%>
+<%- include('partials/navbar-home'); -%>
+
+<form class="addimage">
+    <h2>Add picture</h2>
+    <label for="src">Image Url</label>
+    <input type="text" name="src" required>
+    <div class="src error"></div>
+    
+    <label for="author">Author</label>
+    <input type="text" name="author" required>
+    <div class="author error"></div>
+
+    <label for="createdAt">Created At</label>
+    <input type="text" name="createdAt" required>
+    <div class="createdAt error"></div>
+
+  
+    <h4>Comment section</h4>
+    <hr>
+ 
+    <label for="commentAuthor">Author of Comment</label>
+    <input type="text" name="commentAuthor" value="<%=user.nickname%>" readonly required>
+    <div class="commentAuthor error"></div>
+    
+    <label for="commentCreatedAt">Created At</label>
+    <input type="text" readonly name="commentCreatedAt" id="commentCreatedAt" required>
+    <div class="commentCreatedAt error"></div>
+
+    <label for="comment">Comment</label>
+    <input type="text" name="comment" required>
+    <div class="comment error"></div>
+    
+    <button>Save image</button>
+</form>
+
+<script>
+    const pageTitle = JSON.parse('<%- JSON.stringify(pageTitle) %>');
+    document.getElementById("pageTitle").innerHTML = pageTitle;
+    const form = document.querySelector('form');
+    const d = new Date();
+    document.getElementById('commentCreatedAt').value = d
+
+    form.addEventListener('submit',async (e)=>{
+        e.preventDefault();
+
+        const src = form.src.value;
+        const author = form.author.value;
+        const createdAt = form.createdAt.value;
+        const commentAuthor = form.commentAuthor.value;
+        const commentCreatedAt = form.commentCreatedAt.value;
+        const comment = form.comment.value;
+  
+
+        try{
+        const res = await fetch('/newimage',{
+            method: 'POST',
+            body: JSON.stringify({
+                                    src, 
+                                    author,
+                                    createdAt,
+                                    commentAuthor,
+                                    commentCreatedAt,
+                                    comment
+                                }),
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await res.json();
+        console.log(data);
+        if (data.errors){
+             
+        }
+        if (data.image){
+            location.assign('/')
+        }
+       }
+       catch(err){
+        console.log(err);
+       }
+        
+    })
+</script>
+
+
+<%- include('partials/footer'); -%>

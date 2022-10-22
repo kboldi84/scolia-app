@@ -1,0 +1,162 @@
+<%- include('partials/header'); -%>
+  <%- include('partials/navbar-home'); -%>
+
+    <div class="controls">
+
+      <div class="c-left">
+
+        <p>
+          Author: <%= image.author %>
+        </p>
+
+        <p>
+          Created: <%= image.createdAt %>
+        </p>
+
+        Album:
+        <select id="album" class="btn" name="album" >
+          <% albums.forEach(function(album){ %>
+
+            <%if (album.title==image.album) { %>
+              <option selected value="<%=album.title %>">
+                <%= album.title %>
+              </option>
+              <% }else{ %>
+                <option value="<%= album.title %>">
+                  <%= album.title %>
+                </option>
+                <% } %>
+
+                  <% }); %>
+                    <%if (image.album=='-' ) { %>
+                      <option selected value="-">-</option>
+                      <% } %>
+        </select>
+        <button id="albumUpdate">Album update</button>
+        <hr>
+        <p>
+          <img src="<%= image.src %>" alt="">
+        </p>
+
+      </div>
+      <div class="c-right">
+        <h2>Comments</h2>
+        <% image.comments.forEach(function(comment) { %>
+          <p class="comment" name="old_comment">
+            <%= comment.comment %><br /><span>Author:</span>
+              <%= comment.commentAuthor %><br /><span>Created:</span>
+                <%= comment.commentCreatedAt %>
+          </p>
+          <% }); %>
+
+            <form>
+              <h4>Add comment</h4>
+              <input type="text" class="newcomment" name="commentAuthor" value="<%=user.nickname%>">
+              <input type="text" class="newcomment" name="new_comment">
+              <button>Add Comment</button>
+            </form>
+      </div>
+    </div>
+
+
+
+    <script>
+      const pageTitle = JSON.parse('<%- JSON.stringify(pageTitle) %>');
+      const btn = document.getElementById("albumUpdate")
+
+
+
+   
+      const image = JSON.parse('<%- JSON.stringify(image) %>');
+      const objId = image._id
+      document.getElementById("pageTitle").innerHTML = pageTitle;
+     
+
+      btn.addEventListener('click', async (e) => {
+        let album = document.getElementById('album').value;
+
+        
+        try {
+          const res = await fetch('/updateAlbum', {
+            method: 'POST',
+            body: JSON.stringify({
+              objId,
+              album
+            }),
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const data = await res.json();
+         // console.log(data);
+          if (data.errors) {
+
+          }
+          if (data.image) {
+            location.assign('/images/'+objId)
+          }
+        }
+        catch (err) {
+          console.log(err);
+        }
+
+      })
+      
+
+
+
+      //console.log(currentAlbum)
+      const form = document.querySelector('form');
+      const comments = []
+
+
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+       
+        const newcomment = form.new_comment.value;
+        const commentAuthor = form.commentAuthor.value;
+  
+        const d = new Date();
+        if (newcomment != '') {
+          comments.push(
+            { 
+              'commentAuthor': `${commentAuthor}`,
+               'comment': `${newcomment}`,
+               'commentCreatedAt': `${d}` 
+            }
+          )
+
+          try {
+          const res = await fetch('/addcomment', {
+            method: 'POST',
+            body: JSON.stringify({
+              objId,
+              comments
+            }),
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const data = await res.json();
+          console.log(data);
+          if (data.errors) {
+
+          }
+          if (data.image) {
+            location.assign('/images/' + objId)
+          }
+        }
+        catch (err) {
+          console.log(err);
+        }
+
+
+        }
+
+
+     
+
+      })
+
+
+    </script>
+
+    <%- include('partials/footer'); -%>
