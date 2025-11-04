@@ -1,0 +1,655 @@
+Akkor a rendszer működési logikája ez lesz:
+
+🔸 REGISTRATION
+
+Kliens REGISTER → Kamailio kapja.
+
+Kamailio hitelesít a auth_db modulon keresztül:
+
+ha WITH_ASTERISK aktív → a ps_auths tábla az Asterisk MySQL adatbázisban.
+
+Kamailio menti a usrloc táblába (és DB-be).
+
+Kamailio továbbítja a REGISTER-t Asterisk felé (route[REGFWD]).
+
+➡️ Az Asterisk is látja, de a Kamailio a valódi registrar, tehát a hívások hozzá jönnek vissza.
+
+🔸 INVITE
+
+Kliens INVITE → Kamailio kapja.
+
+Kamailio megnézi, hogy a request nem Asterisktől jött (!route(FROMASTERISK)).
+
+route(TOASTERISK) → az INVITE átmegy Asterisk felé.
+
+Asterisk dialplan dolgozik → hívás másik kliensre.
+
+Asterisk visszaküldi az INVITE-et Kamailión keresztül → Kamailio usrloc alapján megtalálja a cél klienst → továbbítja.
+
+3. Auth integráció – fontos részlet
+
+Ez a rész:
+
+#!ifdef WITH_ASTERISK
+modparam("auth_db", "user_column", "id")
+modparam("auth_db", "password_column", "password")
+modparam("auth_db", "db_url", DBASTURL)
+modparam("auth_db", "version_table", 0)
+#!else
+modparam("auth_db", "db_url", DBURL)
+modparam("auth_db", "password_column", "password")
+modparam("auth_db", "use_domain", MULTIDOMAIN)
+#!endif
+
+
+Azt jelenti, hogy:
+
+Ha WITH_ASTERISK aktív, a Kamailio az Asterisk adatbázist használja (DBASTURL).
+
+Ahol a táblák: ps_auths, ps_aors, ps_contacts (PJSIP schema).
+
+Tehát nem kell külön Kamailio subscriber tábla, a Kamailio az Asterisk PJSIP táblákat olvassa a hitelesítéshez.
+
+🔹 4. Usrloc szinkron
+
+Ez a rész biztosítja, hogy a Kamailio usrloc (helyi cache + DB) tárolja, ki mely IP-n van:
+
+modparam("usrloc", "db_mode", 2)
+
+
+→ 2 = write-through:
+mind memóriában, mind adatbázisban frissíti az adatokat.
+
+Így Kamailio mindig tudja, melyik kliens hol érhető el, és nem kell az Asterisknek ezt kezelnie.
+
+🔹 5. Hol kerül elő az is_method hiba
+
+Az is_method() függvény a core parancskészlet része.
+Ha a config elején hiányzott a corex.so vagy siputils.so, akkor jön az a hiba, amit írtál korábban.
+
+Ebben a mostani configban viszont már helyesen benne van:
+
+loadmodule "corex.so"
+loadmodule "siputils.so"
+
+
+Tehát ezzel már nem fog előjönni.
+
+🔹 6. Következő lépés (ha működik az indulás)
+
+A következő, amit érdemes lesz megnézni:
+
+hogy Kamailio valóban látja-e a regisztrációkat:
+
+kamcmd ul.dump
+
+
+és hogy Asterisk oldalon a peer státusz mit mutat (pjsip show contacts).
+
+🔹 Összefoglalás – ez a konfiguráció:
+
+✅ Kamailio fogadja és tárolja a regisztrációkat
+✅ Kamailio hitelesít az Asterisk ps_auths táblából
+✅ Kamailio továbbítja a REGISTER-t az Asterisk felé
+✅ Kamailio továbbítja az INVITE-et az Asterisk felé
+✅ Kamailio a usrloc segítségével megtalálja a hívottat
+✅ Asterisk a dialplan logikát kezeli
+✅ Kamailio leveszi a REGISTER terhelést az Asteriskről
+
+Célrendszer:
+
+Kamailio = Registrar + Proxy
+
+Asterisk = Dialplan, logika, média, hívásfelépítés
+
+📡 Áramlás:
+Kliens ⇄ Kamailio ⇄ Asterisk ⇄ Kamailio ⇄ Kliens
+
+sorcery.conf
+
+A Kamailio az Asterisk adatbázisban levő ps_auths, ps_aors, ps_contacts táblákat fogja olvasni, ezért Asterisknek is azokat kell használni.
+
+Nyisd meg:
+
+/etc/asterisk/sorcery.conf
+
+
+És ellenőrizd vagy add hozzá a következő sorokat:
+
+[res_pjsip]
+auth=realtime,ps_auths
+aor=realtime,ps_aors
+endpoint=realtime,ps_endpoints
+domain_alias=realtime,ps_domain_aliases
+identify=realtime,ps_identify
+registration=realtime,ps_registrations
+contact=realtime,ps_contacts
+
+Ez biztosítja, hogy minden PJSIP entitás MySQL-ből jön, ugyanabból az adatbázisból, amit a Kamailio is használ.
+2️⃣ pjsip.conf
+
+Mivel a PJSIP adatok DB-ből jönnek, a pjsip.conf szinte üres lesz.
+Csak az általános globális beállításokat hagyd meg:
+
+[global]
+type=global
+user_agent=Asterisk PBX
+
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+local_net=192.168.0.0/24   ; <-- a te belső hálózatod
+external_media_address=PUBLIC_IP
+external_signaling_address=PUBLIC_IP
+
+
+A kliensek nem közvetlenül az Asteriskhez regisztrálnak, hanem Kamailión keresztül, ezért a transport-udp csak az Asterisk és Kamailio közti kommunikációhoz kell.
+
+3️⃣ extconfig.conf
+
+Ez mondja meg az Asterisknek, hol van az adatbázis:
+
+ps_endpoints => odbc,asterisk
+ps_auths => odbc,asterisk
+ps_aors => odbc,asterisk
+ps_domain_aliases => odbc,asterisk
+ps_contacts => odbc,asterisk
+ps_registrations => odbc,asterisk
+ps_identify => odbc,asterisk
+
+
+Ehhez persze az res_odbc.conf-ban legyen egy asterisk DSN definiálva.
+
+4️⃣ res_odbc.conf
+[asterisk]
+enabled=yes
+dsn=MySQL-asterisk
+username=asterisk
+password=asteriskpass
+pre-connect=yes
+
+
+A dsn itt a /etc/odbc.ini-ben definiált ODBC kapcsolat neve, pl.:
+
+[MySQL-asterisk]
+Description=MySQL Asterisk database
+Driver=MySQL
+Server=127.0.0.1
+Database=asterisk
+User=asterisk
+Password=asteriskpass
+Port=3306
+Option=3
+
+5️⃣ Kamailio → Asterisk forgalom
+
+Az Asterisk az endpoint-ot Kamailióként fogja látni, nem közvetlen kliensként.
+
+Ezért a DB-ben kell egy statikus endpoint az Asterisk számára, hogy Kamailio-t elfogadja:
+
+példa (ps_endpoints)
+id	transport	aors	context	disallow	allow	direct_media
+kamailio-endpoint	transport-udp	kamailio-aor	from-kamailio	all	ulaw,alaw	no
+
+példa (ps_aors)
+id	max_contacts
+kamailio-aor	1
+példa (ps_auths)
+id	auth_type	username	password
+kamailio-auth	userpass	kamailio	strongsecret
+
+Így Kamailio hitelesítheti magát Asterisk felé, ha szükséges.
+
+6️⃣ Dialplan (extensions.conf vagy extensions.ael)
+
+Mivel Kamailio továbbítja az INVITE-et Asterisk felé, a híváslogika pontosan úgy működik, mint korábban.
+Tehát a dialplan maradhat:
+
+[from-kamailio]
+exten => _X.,1,NoOp(Processing call to ${EXTEN} from Kamailio)
+ same => n,Dial(PJSIP/${EXTEN},30)
+ same => n,Hangup()
+
+
+Itt Asterisk megnézi a cél usert, és mivel a PJSIP user a DB-ben benne van, tudni fogja, hogy az adott usernek milyen aor-ja van — de a valós IP/Contact-ot Kamailio kezeli.
+
+7️⃣ Ellenőrzés
+
+Ha minden jól van beállítva:
+
+Kamailio oldal:
+kamcmd ul.dump
+
+
+→ látod a kliensek regisztrációit (IP, contact, stb.)
+
+Asterisk oldal:
+asterisk -rx "pjsip show endpoints"
+asterisk -rx "pjsip show contacts"
+
+
+→ itt már nem kell minden kliensnek megjelennie, mert Asterisk a hívásokat Kamailión keresztül intézi, de a Kamailio regisztrált usereket továbbra is eléri.
+
+⚙️ Összefoglalás
+Funkció	Komponens
+REGISTER kezelése	Kamailio
+Authentication	Kamailio (Asterisk DB-ből)
+Location service	Kamailio usrloc
+Dialplan / Logika	Asterisk
+Média / RTP	Asterisk
+Userek / Auth / AOR	Közös MySQL DB (ps_ táblák)
+
+1️⃣ MySQL a Kamailio gépen
+
+A MySQL-nek engedni kell, hogy az Asterisk gép csatlakozzon.
+Példa:
+
+CREATE DATABASE asterisk;
+CREATE USER 'asterisk'@'%' IDENTIFIED BY 'jelszo123';
+GRANT ALL PRIVILEGES ON asterisk.* TO 'asterisk'@'%';
+FLUSH PRIVILEGES;
+
+
+🔸 a % azt jelenti, hogy bármilyen IP-ről jöhet kapcsolat
+(ha biztonság miatt szeretnéd, megadhatod az Asterisk gép IP-jét is, pl. 'asterisk'@'10.0.0.5')
+
+2️⃣ Asterisk gépen (res_odbc.conf)
+[asterisk]
+enabled=yes
+dsn=MySQL-asterisk
+username=asterisk
+password=jelszo123
+pre-connect=yes
+
+
+És az /etc/odbc.ini-ben:
+
+[MySQL-asterisk]
+Description=Asterisk database on Kamailio host
+Driver=MySQL
+Server=kamailio_vm_ip
+Database=asterisk
+User=asterisk
+Password=jelszo123
+Port=3306
+Option=3
+
+
+⚠️ Fontos: a kamailio_vm_ip legyen az a VM IP-je, ahol a MySQL fut,
+és a MySQL bind-address legyen 0.0.0.0, hogy távoli gépről is elérhető legyen.
+
+3️⃣ Kamailio configban
+
+Mivel a Kamailio is ugyanott fut, egyszerűen így állítsd be:
+
+#!define WITH_MYSQL
+#!define WITH_AUTH
+#!define WITH_USRLOCDB
+#!define WITH_ASTERISK
+
+#!define DBURL "mysql://asterisk:jelszo123@localhost/asterisk"
+#!define DBASTURL "mysql://asterisk:jelszo123@localhost/asterisk"
+
+
+→ mindkettő ugyanaz az adatbázis, ugyanazon a gépen.
+Kamailio így az Asterisk PJSIP táblákból (ps_auths, ps_aors, ps_contacts) fog dolgozni.
+
+4️⃣ Ellenőrzés parancsok
+
+Kamailio oldalon:
+
+kamcmd sql.query "select username,domain,ha1 from ps_auths"
+kamcmd ul.dump
+
+
+Asterisk oldalon:
+
+asterisk -rx "pjsip show endpoints"
+
+
+Ha mindkettő látja az adatokat → a kapcsolat tökéletes.
+
+
+
+✅ Összefoglalva:
+
+Kamailio + MySQL egy gépen = jó
+
+Asterisk külön gépen, de az ottani res_odbc → MySQL-re mutat = jó
+
+Kamailio DBURL és DBASTURL ugyanaz = helyes
+
+MySQL-nek engedni kell a távoli elérést (bind + grant)
+
+1️⃣ Alap adatbázis-séma
+
+Ha még nincs meg az Asterisk PJSIP adatbázis, futtasd ezt a MySQL-en (a Kamailio gépen):
+
+mysql -u root -p asterisk < /usr/share/asterisk/astdb.sql
+
+
+Ez létrehozza a ps_endpoints, ps_auths, ps_aors, ps_contacts stb. táblákat.
+(Ha már megvannak, ezt a lépést ne futtasd újra.)
+
+👥 2️⃣ Két SIP-user példa (1001 és 1002)
+
+Másold be és futtasd a következő SQL-t a Kamailio/MySQL szerveren:
+
+USE asterisk;
+
+-- Felhasználó 1001
+INSERT INTO ps_aors (id, max_contacts) VALUES ('1001', 1)
+ON DUPLICATE KEY UPDATE max_contacts=1;
+
+INSERT INTO ps_auths (id, auth_type, password, username) 
+VALUES ('1001', 'userpass', 'jelszo1001', '1001')
+ON DUPLICATE KEY UPDATE password='jelszo1001';
+
+INSERT INTO ps_endpoints (id, transport, aors, auth, context, disallow, allow)
+VALUES ('1001', 'transport-udp', '1001', '1001', 'from-internal', 'all', 'ulaw,alaw')
+ON DUPLICATE KEY UPDATE aors='1001', auth='1001';
+
+-- Felhasználó 1002
+INSERT INTO ps_aors (id, max_contacts) VALUES ('1002', 1)
+ON DUPLICATE KEY UPDATE max_contacts=1;
+
+INSERT INTO ps_auths (id, auth_type, password, username) 
+VALUES ('1002', 'userpass', 'jelszo1002', '1002')
+ON DUPLICATE KEY UPDATE password='jelszo1002';
+
+INSERT INTO ps_endpoints (id, transport, aors, auth, context, disallow, allow)
+VALUES ('1002', 'transport-udp', '1002', '1002', 'from-internal', 'all', 'ulaw,alaw')
+ON DUPLICATE KEY UPDATE aors='1002', auth='1002';
+
+⚙️ 3️⃣ Asterisk-oldali kiegészítések
+/etc/asterisk/pjsip.conf
+
+Ne legyenek benne user-definíciók!
+Csak ez maradjon benne (vagy bővítsd így):
+
+[global]
+type=global
+endpoint_identifier_order=username,ip,anonymous
+
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0
+
+/etc/asterisk/exten.conf
+
+Egy egyszerű belső hívási logika:
+
+[from-internal]
+exten => _X.,1,NoOp(Incoming call to ${EXTEN})
+ same => n,Dial(PJSIP/${EXTEN},20)
+ same => n,Hangup()
+
+
+Ez azt jelenti: ha 1001 hívja 1002-t → Asterisk hívást épít PJSIP-on keresztül.
+
+📡 4️⃣ Kamailio beállítások
+
+A Kamailio-ban ez legyen a DB-URL:
+
+#!define DBURL "mysql://asterisk:jelszo123@localhost/asterisk"
+#!define DBASTURL "mysql://asterisk:jelszo123@localhost/asterisk"
+
+🧪 5️⃣ Tesztelés
+
+Indítsd újra:
+
+systemctl restart kamailio
+systemctl restart asterisk
+
+
+Ellenőrzés Asterisk oldalon:
+
+asterisk -rx "pjsip show endpoints"
+
+
+Látnod kell:
+
+Endpoint:  1001/1001  ...
+Endpoint:  1002/1002  ...
+
+
+Kapcsold be SIP-klienst (pl. MicroSIP, Linphone, Zoiper):
+
+SIP szerver: Kamailio IP-je
+
+Felhasználó: 1001
+
+Jelszó: jelszo1001
+
+Másik kliens: 1002 / jelszo1002
+
+Ha mindkettő regisztrál, a Kamailio logban látod:
+
+REGISTER received for 1001
+REGISTER saved to usrloc
+
+
+Próbáld hívni:
+1001 → 1002
+→ Ha mindent jól csináltunk, Asterisk csengést indít.
+
+Ha kéred, adok egy teljes Kamailio config példát is ehhez (csak a lényeges részekkel: usrloc, auth, dispatcher Asterisk felé, forward INVITE).
+
+Futtasd ezt a MySQL-ben (root-ként vagy asterisk userrel):
+
+CREATE DATABASE IF NOT EXISTS asterisk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE asterisk;
+
+-- ===========================
+-- PJSIP REALTIME TABLES
+-- ===========================
+
+CREATE TABLE IF NOT EXISTS ps_endpoints (
+    id VARCHAR(40) NOT NULL PRIMARY KEY,
+    transport VARCHAR(40),
+    aors VARCHAR(200),
+    auth VARCHAR(40),
+    context VARCHAR(40),
+    disallow VARCHAR(200),
+    allow VARCHAR(200),
+    direct_media VARCHAR(5),
+    connected_line_method VARCHAR(20),
+    direct_media_method VARCHAR(20),
+    rewrite_contact VARCHAR(5),
+    rtp_symmetric VARCHAR(5),
+    force_rport VARCHAR(5),
+    ice_support VARCHAR(5),
+    rtcp_mux VARCHAR(5),
+    dtmf_mode VARCHAR(20)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ps_auths (
+    id VARCHAR(40) NOT NULL PRIMARY KEY,
+    auth_type VARCHAR(20),
+    password VARCHAR(80),
+    realm VARCHAR(40),
+    username VARCHAR(40)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ps_aors (
+    id VARCHAR(40) NOT NULL PRIMARY KEY,
+    contact VARCHAR(200),
+    max_contacts INT(11),
+    remove_existing VARCHAR(5),
+    qualify_frequency INT(11)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ps_contacts (
+    id VARCHAR(255) NOT NULL PRIMARY KEY,
+    uri VARCHAR(255),
+    expiration_time DATETIME,
+    qualify_frequency INT(11),
+    outbound_proxy VARCHAR(255),
+    path VARCHAR(255),
+    user_agent VARCHAR(255),
+    reg_server VARCHAR(255),
+    authenticate_qualify VARCHAR(5),
+    via_addr VARCHAR(255),
+    via_port INT(11),
+    call_id VARCHAR(255),
+    endpoint VARCHAR(100),
+    prune_on_boot VARCHAR(5)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ps_transports (
+    id VARCHAR(40) NOT NULL PRIMARY KEY,
+    type VARCHAR(20),
+    protocol VARCHAR(20),
+    bind VARCHAR(40),
+    local_net VARCHAR(40),
+    external_media_address VARCHAR(40),
+    external_signaling_address VARCHAR(40),
+    external_signaling_port INT(11),
+    domain VARCHAR(40)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ===========================
+-- 2 TEST USERS (1001, 1002)
+-- ===========================
+
+-- User 1001
+INSERT INTO ps_aors (id, max_contacts) VALUES ('1001', 1)
+ON DUPLICATE KEY UPDATE max_contacts=1;
+
+INSERT INTO ps_auths (id, auth_type, password, username)
+VALUES ('1001', 'userpass', 'jelszo1001', '1001')
+ON DUPLICATE KEY UPDATE password='jelszo1001';
+
+INSERT INTO ps_endpoints (id, transport, aors, auth, context, disallow, allow, direct_media)
+VALUES ('1001', 'transport-udp', '1001', '1001', 'from-internal', 'all', 'ulaw,alaw', 'no')
+ON DUPLICATE KEY UPDATE aors='1001', auth='1001';
+
+-- User 1002
+INSERT INTO ps_aors (id, max_contacts) VALUES ('1002', 1)
+ON DUPLICATE KEY UPDATE max_contacts=1;
+
+INSERT INTO ps_auths (id, auth_type, password, username)
+VALUES ('1002', 'userpass', 'jelszo1002', '1002')
+ON DUPLICATE KEY UPDATE password='jelszo1002';
+
+INSERT INTO ps_endpoints (id, transport, aors, auth, context, disallow, allow, direct_media)
+VALUES ('1002', 'transport-udp', '1002', '1002', 'from-internal', 'all', 'ulaw,alaw', 'no')
+ON DUPLICATE KEY UPDATE aors='1002', auth='1002';
+
+-- ===========================
+-- OPTIONAL: Transport definition
+-- ===========================
+INSERT INTO ps_transports (id, type, protocol, bind)
+VALUES ('transport-udp', 'transport', 'udp', '0.0.0.0:5060')
+ON DUPLICATE KEY UPDATE protocol='udp';
+
+✅ Mit kapsz ettől?
+
+Ez létrehozza:
+
+ps_endpoints, ps_auths, ps_aors, ps_contacts, ps_transports
+
+két működő felhasználót (1001 / 1002)
+
+1 db UDP transportot (transport-udp)
+
+🔍 Ellenőrzés
+
+Futtasd:
+
+mysql -u root -p asterisk -e "show tables like 'ps_%';"
+
+
+és aztán:
+
+mysql -u root -p asterisk -e "select id,username from ps_auths;"
+
+
+Ha látod:
+
+id     username
+1001   1001
+1002   1002
+
+
+akkor minden rendben van 🎯
+
+Ha akarod, a következő lépésben megmutatom, hogyan írjuk meg ehhez a Kamailio configot (ami:
+
+hitelesíti a usereket ebből a DB-ből,
+
+a regisztrációkat usrloc-ba menti,
+
+és a hívásokat az Asterisk felé továbbítja).
+
+Nagyon jó 💪 — akkor jöjjön egy komplett, működő Kamailio konfiguráció, ami:
+
+✅ a Kamailióhoz regisztrálódnak a kliensek
+✅ az Asterisk az adatbázist közösen látja
+✅ a Kamailio végzi az autentikációt és a usrloc kezelést
+✅ az INVITE-okat a megfelelő Asterisk példányhoz továbbítja
+
+Ez a verzió egyetlen Asterisk node-hoz készült, tehát egyszerű és stabil alap.
+Innen majd lehet továbbfejleszteni több node-os (dispatcher-es) topológiára.
+
+🧩 1️⃣ Ellenőrizd, hogy az ODBC kapcsolat működik
+
+A PJSIP realtime konfiguráció ODBC-n keresztül kapcsolódik a MySQL-hez.
+Ezt a kapcsolatot először parancssorból kell kipróbálni.
+
+Futtasd az Asterisk gépen:
+
+isql -v MySQL-asterisk asterisk jelszo123
+
+
+👉 Ha ezt látod:
+
++---------------------------------------+
+| Connected!                            |
+| SQL>                                  |
+
+
+akkor az ODBC kapcsolat működik ✅
+
+Ha hibát kapsz ([ISQL] ERROR vagy Can't connect), akkor:
+
+az /etc/odbc.ini-ben ellenőrizd a Server, Database, User, Password mezőket,
+
+a /etc/odbcinst.ini-ben legyen érvényes MySQL driver (pl. Driver=/usr/lib/x86_64-linux-gnu/odbc/libmyodbc5.so),
+
+a MySQL bind-address engedje a távoli kapcsolatot (0.0.0.0 vagy az Asterisk IP-je),
+
+és a MySQL usernek legyen GRANT ALL jogosultsága az Asterisk IP-re.
+
+⚙️ 2️⃣ Ellenőrizd az Asterisk ODBC réteget
+
+Asterisk CLI-n:
+
+asterisk -rx "odbc show all"
+
+
+Ha jól van beállítva, valami ilyet kell látnod:
+
+ODBC DSN Settings
+-----------------
+  Name:   asterisk
+  DSN:    MySQL-asterisk
+  Connected:  yes
+  Number of active connections: 1 (out of 5)
+
+
+➡️ Ha “Connected: yes” → az Asterisk látja a MySQL adatbázist!
+Ha “Connected: no” vagy hiba, akkor valószínűleg:
+
+hibás DSN név (res_odbc.conf ↔ /etc/odbc.ini nem egyezik),
+
+rossz jelszó / host,
+
+MySQL nincs elérhető porton (3306).
+
+Linux (Debian/Ubuntu) telepítés
+sudo apt update
+sudo apt install unixodbc unixodbc-dev
+sudo apt install libmyodbc   # MySQL ODBC driver
