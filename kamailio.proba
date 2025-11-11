@@ -1,0 +1,80 @@
+####### Kamailio fő konfiguráció #######
+
+#!define DBURL "mysql://kamailio:password@10.0.0.13/kamailio"
+
+####### Modulok betöltése ########
+loadmodule "db_mysql.so"
+loadmodule "sl.so"
+loadmodule "tm.so"
+loadmodule "rr.so"
+loadmodule "maxfwd.so"
+loadmodule "registrar.so"
+loadmodule "usrloc.so"
+loadmodule "auth.so"
+loadmodule "auth_db.so"
+loadmodule "dispatcher.so"
+loadmodule "textops.so"
+loadmodule "xlog.so"
+
+####### Modulparaméterek ########
+modparam("usrloc", "db_mode", 2)
+modparam("usrloc", "db_url", DBURL)
+modparam("auth_db", "calculate_ha1", yes)
+modparam("auth_db", "password_column", "password")
+
+modparam("dispatcher", "list_file", "/etc/kamailio/dispatcher.list")
+modparam("dispatcher", "ds_ping_method", "OPTIONS")
+modparam("dispatcher", "ds_ping_interval", 30)
+modparam("dispatcher", "ds_probing_mode", 1)
+modparam("dispatcher", "ds_ping_from", "sip:kamailio@domain.hu")
+
+####### Alap routing ########
+request_route {
+    xlog("L_INFO", "--- New request: $rm from $si ---\n");
+
+    # REGISTER
+    if (is_method("REGISTER")) {
+        if (!www_authorize("domain.hu", "subscriber")) {
+            www_challenge("domain.hu", "0");
+            exit;
+        }
+        if (!save("location")) {
+            sl_send_reply("500", "Registration failed");
+            exit;
+        }
+        sl_send_reply("200", "OK");
+        exit;
+    }
+
+    # INVITE - load balancing
+    if (is_method("INVITE")) {
+        if (!lookup("location")) {
+            if (!ds_select_dst("1", "4")) {
+                sl_send_reply("500", "No destination available");
+                exit;
+            }
+            xlog("L_INFO", "Routing call to backend: $du\n");
+            route(RELAY);
+            exit;
+        } else {
+            route(RELAY);
+            exit;
+        }
+    }
+
+    # Egyéb SIP üzenetek
+    if (is_method("OPTIONS")) {
+        sl_send_reply("200", "Keepalive OK");
+        exit;
+    }
+
+    route(RELAY);
+}
+
+route[RELAY] {
+    record_route();
+    if (!t_relay()) {
+        sl_reply_error();
+    }
+    exit;
+}
