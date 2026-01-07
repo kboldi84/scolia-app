@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mqtt-deployment
+  labels:
+    app: mqtt-broker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mqtt-broker
+  template:
+    metadata:
+      labels:
+        app: mqtt-broker
+    spec:
+      containers:
+      - name: mqtt-broker
+        image: mqtt-broker:1.0
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 1884
+        env:
+        - name: MQTT_USERNAME
+          valueFrom: 
+            secretKeyRef:
+              name: mqtt-secret
+              key: mqtt-username
+        - name: MQTT_PASSWORD
+          valueFrom: 
+            secretKeyRef:
+              name: mqtt-secret
+              key: mqtt-password
+        - name: TCP_PORT
+          value: "1884"
+        - name: WS_ENABLED
+          value: "true"
+        - name: WS_PORT
+          value: "8883"
+        - name: WSS_ENABLED
+          value: "true" 
+        - name: WSS_PORT
+          value: "8084"     
+        - name: KEYPATH
+          value: "./key.pem"
+        - name: CERTPATH
+          value: "./cert.pem"
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-broker-service
+spec:
+  selector:
+    app: mqtt-broker
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 1884
+      targetPort: 1884
+      nodePort: 31884

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-broker-nodeport-support # Sets service name
+  labels:
+    app: mqtt-broker # Labels and Selectors
+spec:
+  type: NodePort # Sets service type
+  ports:
+    - port: 1884 # Sets port to run the mqtt application
+  selector:
+    app: mqtt-broker

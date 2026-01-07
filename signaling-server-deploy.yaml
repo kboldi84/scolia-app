@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signal-server-deploy
+  labels:
+    app: signal-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: signal-server
+  template:
+    metadata:
+      labels:
+        app: signal-server
+    spec:
+      containers:
+      - name: signal-server
+        image: webrtc-server:23.07.20_12
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8886
+        - containerPort: 31999       

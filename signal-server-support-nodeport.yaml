@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: signal-server-support-nodeport
+spec:
+  type: ClusterIP
+  selector:
+    app: signal-server
+  ports:
+  - nodePort: 31999
+    port: 9999
+    protocol: UDP
+    targetPort: 9999
+  type: NodePort
